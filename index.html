@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Five in a Row</title>
+  <style>
+    :root {
+      --wood: #c9956b;
+      --line: #5c3a22;
+      --ink: #2a1a10;
+      --gold: #f0c14b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: Georgia, "Times New Roman", serif;
+      background: #1c1410;
+      color: #f4e8d8;
+    }
+    main {
+      padding: 24px 16px 32px;
+      text-align: center;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+    }
+    .subtitle {
+      margin: 0 0 10px;
+      opacity: 0.7;
+      font-size: 0.9rem;
+    }
+    .modes, .actions {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin: 12px 0;
+    }
+    button {
+      font: inherit;
+      cursor: pointer;
+      border: 1px solid #8a6a4a;
+      background: #3a2a1c;
+      color: #f4e8d8;
+      padding: 8px 14px;
+      border-radius: 8px;
+    }
+    button.active, button:hover {
+      background: #5c4030;
+    }
+    #status {
+      min-height: 1.4em;
+      margin: 8px 0 14px;
+      font-size: 1.05rem;
+    }
+    #board {
+      --n: 15;
+      --cell: 28px;
+      position: relative;
+      width: calc(var(--n) * var(--cell));
+      height: calc(var(--n) * var(--cell));
+      margin: 0 auto;
+      background:
+        linear-gradient(var(--line), var(--line)) center / calc(100% - var(--cell)) 1px no-repeat,
+        linear-gradient(var(--line), var(--line)) center / 1px calc(100% - var(--cell)) no-repeat,
+        repeating-linear-gradient(to right, transparent 0, transparent calc(var(--cell) - 1px), var(--line) calc(var(--cell) - 1px), var(--line) var(--cell)),
+        repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--cell) - 1px), var(--line) calc(var(--cell) - 1px), var(--line) var(--cell)),
+        var(--wood);
+      background-position: center, center, calc(var(--cell) / 2) 0, 0 calc(var(--cell) / 2), 0 0;
+      border-radius: 6px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+      display: grid;
+      grid-template-columns: repeat(var(--n), var(--cell));
+      grid-template-rows: repeat(var(--n), var(--cell));
+    }
+    .cell {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      border-radius: 50%;
+      position: relative;
+      cursor: pointer;
+    }
+    .cell::after {
+      content: "";
+      position: absolute;
+      inset: 3px;
+      border-radius: 50%;
+      opacity: 0;
+      pointer-events: none;
+      transition: box-shadow 0.15s ease;
+    }
+    #board:not(.locked) .cell:not(.black):not(.white):hover::after {
+      opacity: 0.35;
+      background: var(--hover, #111);
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+    }
+    .cell.black::after,
+    .cell.white::after {
+      opacity: 1;
+    }
+    .cell.black::after {
+      background: radial-gradient(circle at 35% 35%, #666, #111 70%);
+    }
+    .cell.white::after {
+      background: radial-gradient(circle at 35% 35%, #fff, #d7d7d7 70%);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    }
+    .cell.win::after {
+      box-shadow:
+        0 0 0 3px var(--gold),
+        0 0 10px rgba(240, 193, 75, 0.85);
+    }
+    @media (max-width: 480px) {
+      #board { --cell: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Five in a Row</h1>
+    <p class="subtitle">Get five stones in a line to win</p>
+    <div class="modes">
+      <button type="button" id="pvp" class="active">Two players</button>
+      <button type="button" id="ai">Vs computer</button>
+    </div>
+    <p id="status">Black to move</p>
+    <div id="board" aria-label="Five in a Row board"></div>
+    <div class="actions">
+      <button type="button" id="restart">New game</button>
+    </div>
+  </main>
+  <script>
+    const SIZE = 15;
+    const DIRS = [[1, 0], [0, 1], [1, 1], [1, -1]];
+    const boardEl = document.getElementById("board");
+    const statusEl = document.getElementById("status");
+    const cells = [];
+    let grid = [];
+    let turn = 1;
+    let over = false;
+    let vsComputer = false;
+    let thinking = false;
+    let winningLine = [];
+
+    function emptyGrid() {
+      return Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+    }
+
+    function name(player) {
+      return player === 1 ? "Black" : "White";
+    }
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function lock(on) {
+      boardEl.classList.toggle("locked", on);
+      boardEl.style.setProperty("--hover", turn === 1 ? "#111" : "#fff");
+    }
+
+    function render() {
+      for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+          const el = cells[r * SIZE + c];
+          const v = grid[r][c];
+          el.classList.toggle("black", v === 1);
+          el.classList.toggle("white", v === 2);
+          el.classList.toggle(
+            "win",
+            winningLine.some(([wr, wc]) => wr === r && wc === c)
+          );
+        }
+      }
+      lock(over || thinking);
+    }
+
+    function count(r, c, dr, dc, player) {
+      let n = 0;
+      let rr = r + dr;
+      let cc = c + dc;
+      while (rr >= 0 && rr < SIZE && cc >= 0 && cc < SIZE && grid[rr][cc] === player) {
+        n++;
+        rr += dr;
+        cc += dc;
+      }
+      return n;
+    }
+
+    function lineCells(r, c, dr, dc, player) {
+      const cellsOnLine = [[r, c]];
+      let rr = r + dr;
+      let cc = c + dc;
+      while (rr >= 0 && rr < SIZE && cc >= 0 && cc < SIZE && grid[rr][cc] === player) {
+        cellsOnLine.push([rr, cc]);
+        rr += dr;
+        cc += dc;
+      }
+      rr = r - dr;
+      cc = c - dc;
+      while (rr >= 0 && rr < SIZE && cc >= 0 && cc < SIZE && grid[rr][cc] === player) {
+        cellsOnLine.unshift([rr, cc]);
+        rr -= dr;
+        cc -= dc;
+      }
+      return cellsOnLine;
+    }
+
+    function findWinLine(r, c, player) {
+      for (const [dr, dc] of DIRS) {
+        const line = lineCells(r, c, dr, dc, player);
+        if (line.length >= 5) return line.slice(0, 5);
+      }
+      return null;
+    }
+
+    function wins(r, c, player) {
+      return findWinLine(r, c, player) !== null;
+    }
+
+    function empties() {
+      const list = [];
+      for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+          if (grid[r][c] === 0) list.push([r, c]);
+        }
+      }
+      return list;
+    }
+
+    function nearStone(r, c) {
+      for (let dr = -2; dr <= 2; dr++) {
+        for (let dc = -2; dc <= 2; dc++) {
+          if (!dr && !dc) continue;
+          const rr = r + dr;
+          const cc = c + dc;
+          if (rr >= 0 && rr < SIZE && cc >= 0 && cc < SIZE && grid[rr][cc] !== 0) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    function findFinish(player) {
+      for (const [r, c] of empties()) {
+        grid[r][c] = player;
+        const ok = wins(r, c, player);
+        grid[r][c] = 0;
+        if (ok) return [r, c];
+      }
+      return null;
+    }
+
+    function scoreCell(r, c, player) {
+      let score = 0;
+      const mid = (SIZE - 1) / 2;
+      score += 6 - (Math.abs(r - mid) + Math.abs(c - mid)) * 0.3;
+      for (const [dr, dc] of DIRS) {
+        const a = count(r, c, dr, dc, player);
+        const b = count(r, c, -dr, -dc, player);
+        const run = a + b;
+        if (run >= 4) score += 1000;
+        else if (run === 3) score += 80;
+        else if (run === 2) score += 18;
+        else if (run === 1) score += 4;
+      }
+      return score;
+    }
+
+    function computerMove() {
+      const win = findFinish(2);
+      if (win) return win;
+      const block = findFinish(1);
+      if (block) return block;
+
+      const nearby = empties().filter(([r, c]) => nearStone(r, c));
+      const pool = nearby.length ? nearby : empties();
+      let best = pool[0];
+      let bestScore = -Infinity;
+      for (const [r, c] of pool) {
+        grid[r][c] = 2;
+        const attack = scoreCell(r, c, 2);
+        grid[r][c] = 1;
+        const defense = scoreCell(r, c, 1) * 0.9;
+        grid[r][c] = 0;
+        const total = attack + defense + Math.random() * 2;
+        if (total > bestScore) {
+          bestScore = total;
+          best = [r, c];
+        }
+      }
+      return best;
+    }
+
+    function place(r, c) {
+      if (over || thinking || grid[r][c] !== 0) return;
+      grid[r][c] = turn;
+      const line = findWinLine(r, c, turn);
+      if (line) {
+        over = true;
+        winningLine = line;
+        setStatus(name(turn) + " wins!");
+        render();
+        return;
+      }
+      if (empties().length === 0) {
+        over = true;
+        winningLine = [];
+        setStatus("Draw");
+        render();
+        return;
+      }
+      turn = turn === 1 ? 2 : 1;
+      setStatus(
+        vsComputer && turn === 2
+          ? "Computer is thinking…"
+          : name(turn) + " to move"
+      );
+      render();
+      if (vsComputer && turn === 2) {
+        thinking = true;
+        lock(true);
+        setTimeout(() => {
+          thinking = false;
+          if (over) return;
+          const [cr, cc] = computerMove();
+          place(cr, cc);
+        }, 280);
+      }
+    }
+
+    function start(mode) {
+      vsComputer = mode === "ai";
+      grid = emptyGrid();
+      turn = 1;
+      over = false;
+      thinking = false;
+      winningLine = [];
+      document.getElementById("pvp").classList.toggle("active", !vsComputer);
+      document.getElementById("ai").classList.toggle("active", vsComputer);
+      setStatus("Black to move");
+      render();
+    }
+
+    for (let i = 0; i < SIZE * SIZE; i++) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cell";
+      const r = Math.floor(i / SIZE);
+      const c = i % SIZE;
+      btn.setAttribute(
+        "aria-label",
+        "Row " + (r + 1) + ", column " + (c + 1)
+      );
+      btn.addEventListener("click", () => place(r, c));
+      boardEl.appendChild(btn);
+      cells.push(btn);
+    }
+
+    document.getElementById("pvp").addEventListener("click", () => start("pvp"));
+    document.getElementById("ai").addEventListener("click", () => start("ai"));
+    document.getElementById("restart").addEventListener("click", () =>
+      start(vsComputer ? "ai" : "pvp")
+    );
+    start("pvp");
+  </script>
+</body>
+</html>
